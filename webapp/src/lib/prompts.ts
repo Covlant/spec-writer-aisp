@@ -1,4 +1,4 @@
-import type { ValidationResult, Gap } from './types';
+import type { ValidationResult, Gap, GapStatus } from './types';
 
 const CHEATSHEET = `## AISP Symbol Reference
 
@@ -189,6 +189,43 @@ Respond with this exact JSON structure:
   ],
   "summary": "Brief 1-2 sentence analysis summary"
 }`;
+}
+
+export type GapAnalysisResult = {
+  status: GapStatus;
+  feedback: string;
+};
+
+export function buildGapAnalyzePrompt(gap: Gap, prose: string): string {
+  return `Evaluate whether the user's answer to a specification gap is sufficient to remove ambiguity.
+
+## Original Specification (excerpt)
+${prose}
+
+## Gap Details
+- Category: ${gap.category}
+- Severity: ${gap.severity}
+- Location: ${gap.location}
+- Question: ${gap.question}
+- Context: ${gap.context}
+
+## User's Answer
+${gap.answer}
+
+## Your Task
+Evaluate the answer against these criteria:
+1. Does it fully resolve the ambiguity described in the gap?
+2. Is the answer specific and quantifiable (not vague)?
+3. Does it introduce any new ambiguities or contradictions?
+4. Are edge cases addressed?
+
+Respond with this exact JSON structure:
+{
+  "status": "ready" or "needs_refinement",
+  "feedback": "If ready: a brief confirmation of what the answer resolves. If needs_refinement: specific guidance on what is still missing or unclear."
+}
+
+Use "ready" if the answer is clear, specific, and resolves the gap. Use "needs_refinement" if the answer is vague, incomplete, or introduces new questions.`;
 }
 
 export function buildGeneratePrompt(

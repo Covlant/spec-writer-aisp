@@ -24,7 +24,7 @@ export function SpecEditor({ flow }: SpecEditorProps) {
     <div className="flex flex-col h-full gap-4">
       <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
         {/* Editor pane */}
-        <div className="flex-1 flex flex-col min-h-[300px]">
+        <div className="flex-[2] flex flex-col min-h-[300px]">
           <div className="flex items-center justify-between mb-2">
             <label htmlFor="prose-editor" className="text-sm text-gray-400">
               Product Specification

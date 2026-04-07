@@ -3,6 +3,7 @@
 import { useReducer, useCallback, useRef, useEffect } from 'react';
 import type {
   Phase,
+  GapStatus,
   SpecFlowState,
   ConversionResult,
   AnalysisResult,
@@ -19,6 +20,9 @@ type Action =
   | { type: 'ANALYZE_SUCCESS'; result: AnalysisResult }
   | { type: 'ANALYZE_ERROR'; error: string }
   | { type: 'UPDATE_GAP_ANSWER'; gapId: string; answer: string }
+  | { type: 'GAP_ANALYZE_START'; gapId: string }
+  | { type: 'GAP_ANALYZE_SUCCESS'; gapId: string; status: GapStatus; feedback: string }
+  | { type: 'GAP_ANALYZE_ERROR'; gapId: string; error: string }
   | { type: 'START_GENERATE' }
   | { type: 'GENERATE_SUCCESS'; result: GenerationResult }
   | { type: 'GENERATE_ERROR'; error: string }
@@ -63,7 +67,37 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
       return {
         ...state,
         gaps: state.gaps.map((g) =>
-          g.id === action.gapId ? { ...g, answer: action.answer } : g,
+          g.id === action.gapId
+            ? { ...g, answer: action.answer, status: 'pending' as GapStatus, feedback: undefined }
+            : g,
+        ),
+      };
+
+    case 'GAP_ANALYZE_START':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId ? { ...g, status: 'analyzing' as GapStatus } : g,
+        ),
+      };
+
+    case 'GAP_ANALYZE_SUCCESS':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId
+            ? { ...g, status: action.status, feedback: action.feedback }
+            : g,
+        ),
+      };
+
+    case 'GAP_ANALYZE_ERROR':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId
+            ? { ...g, status: 'pending' as GapStatus, feedback: action.error }
+            : g,
         ),
       };
 
@@ -96,6 +130,7 @@ export type UseSpecFlowReturn = {
   setProse: (prose: string) => void;
   analyze: () => Promise<void>;
   updateGapAnswer: (gapId: string, answer: string) => void;
+  analyzeGap: (gapId: string) => Promise<void>;
   generate: () => Promise<void>;
   goBack: (toPhase: Phase) => void;
   loadExample: (key: ExampleKey) => void;
@@ -193,6 +228,44 @@ export function useSpecFlow(): UseSpecFlowReturn {
     dispatch({ type: 'UPDATE_GAP_ANSWER', gapId, answer });
   }, []);
 
+  const analyzeGap = useCallback(
+    async (gapId: string) => {
+      const gap = state.gaps.find((g) => g.id === gapId);
+      if (!gap?.answer?.trim()) return;
+
+      dispatch({ type: 'GAP_ANALYZE_START', gapId });
+      try {
+        const res = await fetch('/api/analyze-gap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gap, prose: state.prose }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          dispatch({
+            type: 'GAP_ANALYZE_ERROR',
+            gapId,
+            error: data.error ?? 'Analysis failed',
+          });
+          return;
+        }
+        dispatch({
+          type: 'GAP_ANALYZE_SUCCESS',
+          gapId,
+          status: data.status,
+          feedback: data.feedback,
+        });
+      } catch (err) {
+        dispatch({
+          type: 'GAP_ANALYZE_ERROR',
+          gapId,
+          error: err instanceof Error ? err.message : 'Analysis failed',
+        });
+      }
+    },
+    [state.gaps, state.prose],
+  );
+
   const generate = useCallback(async () => {
     dispatch({ type: 'START_GENERATE' });
     try {
@@ -252,6 +325,7 @@ export function useSpecFlow(): UseSpecFlowReturn {
     setProse,
     analyze,
     updateGapAnswer,
+    analyzeGap,
     generate,
     goBack,
     loadExample,

@@ -37,6 +37,8 @@ export type ValidationResult = {
   pureDensity: number;
 };
 
+export type GapStatus = 'pending' | 'analyzing' | 'needs_refinement' | 'ready';
+
 export type Gap = {
   id: string;
   category: GapCategory;
@@ -46,6 +48,8 @@ export type Gap = {
   context: string;
   suggestion?: string;
   answer?: string;
+  status: GapStatus;
+  feedback?: string;
 };
 
 export type AnalysisResult = {

@@ -59,6 +59,7 @@ export async function analyzeSpec(prose: string): Promise<AnalysisResult> {
   const gaps: Gap[] = (parsed.gaps ?? []).map((g, i) => ({
     ...g,
     id: `gap-${i + 1}`,
+    status: 'pending' as const,
   }));
 
   return {

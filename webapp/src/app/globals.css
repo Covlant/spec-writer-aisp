@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular,
+    "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --color-platinum: #9333ea;
+  --color-gold: #d97706;
+  --color-silver: #6b7280;
+  --color-bronze: #92400e;
+  --color-reject: #dc2626;
+
+  --color-critical: #dc2626;
+  --color-major: #ea580c;
+  --color-minor: #6b7280;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0a0a0a;
+  color: #ededed;
+}
+
+textarea {
+  field-sizing: content;
+}

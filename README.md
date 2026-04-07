@@ -4,6 +4,8 @@
 
 AISP is the open standard for precise AI-to-AI and human-to-AI communication. It reduces prompt ambiguity from 40-65% to under 2%, enabling deterministic, proof-carrying specifications that AI systems understand natively.
 
+This repository contains the **AISP open-core specification** (documentation, 512-symbol reference, evidence examples) and the **AISP Spec Writer** — a web application that converts natural-language product specs into AISP, identifies gaps, and generates test artifacts.
+
 [![npm: aisp-converter](https://img.shields.io/npm/v/aisp-converter.svg?label=aisp-converter&color=blue)](https://www.npmjs.com/package/aisp-converter)
 [![npm: aisp-validator](https://img.shields.io/npm/v/aisp-validator.svg?label=aisp-validator&color=blue)](https://www.npmjs.com/package/aisp-validator)
 [![crates.io: aisp](https://img.shields.io/crates/v/aisp.svg?label=aisp-rust&color=orange)](https://crates.io/crates/aisp)
@@ -12,7 +14,141 @@ AISP is the open standard for precise AI-to-AI and human-to-AI communication. It
 
 ---
 
-## Try It Now — No Installation Required
+## AISP Spec Writer — Web Application
+
+A Next.js web app that guides you through writing unambiguous product specifications using AISP. It follows a **4-phase pipeline**:
+
+```
+ ┌─────────┐     ┌──────────┐     ┌───────────┐     ┌──────────┐
+ │ 1.WRITE │ ──→ │ 2.ANALYZE│ ──→ │ 3.CLARIFY │ ──→ │4.GENERATE│
+ │  prose   │     │ AISP +   │     │ fill gaps │     │ specs +  │
+ │  editor  │     │  gaps    │     │  (form)   │     │  tests   │
+ └─────────┘     └──────────┘     └───────────┘     └──────────┘
+```
+
+1. **Write** — Write your product spec in natural language; see a live AISP preview as you type
+2. **Analyze** — The app converts to AISP, validates quality, and uses Claude to identify gaps (ambiguous terms, missing definitions, edge cases, etc.)
+3. **Clarify** — All gaps appear as a form sorted by severity; answer each question to resolve ambiguities
+4. **Generate** — Produces three output artifacts:
+   - **Final Spec** — Complete, unambiguous product specification with all gaps resolved
+   - **Unit Tests** — Vitest tests for every logical function extracted from the spec
+   - **E2E Tests** — Playwright tests for every user flow (happy path + negative path)
+
+### Quick Start
+
+```bash
+cd webapp
+npm install
+cp .env.example .env.local   # add your ANTHROPIC_API_KEY
+npm run dev                   # http://localhost:3000
+```
+
+### Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                      Next.js App (webapp/)                        │
+├──────────────────────────┬────────────────────────────────────────┤
+│    Client (React/TS)     │          Server (API Routes)           │
+│                          │                                        │
+│  Phase 1: SpecEditor     │  POST /api/convert                    │
+│    ↓ prose text          │    aisp-converter → live AISP preview  │
+│  Phase 2: "Analyze" ────────→ POST /api/analyze                  │
+│    ↓                     │    convert + validate + Claude gaps    │
+│  AISPPanel + GapList     │    ← { aisp, gaps[], summary }        │
+│    ↓                     │                                        │
+│  Phase 3: ClarifyForm    │  (client-side: user fills in answers) │
+│    ↓ gap answers         │                                        │
+│  Phase 4: "Generate" ───────→ POST /api/generate                 │
+│    ↓                     │    Claude: prose + answers → outputs   │
+│  OutputTabs              │    ← { spec, unitTests, e2eTests }    │
+│    • Final Spec          │                                        │
+│    • Unit Tests (Vitest) │                                        │
+│    • E2E Tests (PW)      │                                        │
+└──────────────────────────┴────────────────────────────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| Framework | Next.js 15 (App Router) | Full-stack: React frontend + API routes |
+| Language | TypeScript | Type safety across client/server |
+| Styling | Tailwind CSS 4 | CSS-first config, fast to build |
+| AISP conversion | `aisp-converter` | Official prose-to-AISP converter |
+| AISP validation | `aisp-validator` | Official AISP syntax/quality validator (WASM kernel) |
+| LLM | `@anthropic-ai/sdk` | Claude API for gap analysis + output generation |
+| Persistence | Browser localStorage | No database needed for MVP |
+
+### File Structure
+
+```
+webapp/
+├── package.json
+├── next.config.ts
+├── tsconfig.json
+├── postcss.config.mjs
+├── .env.example                        # ANTHROPIC_API_KEY
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx                  # Root layout with metadata
+│   │   ├── page.tsx                    # Main page — orchestrates 4 phases
+│   │   ├── globals.css                 # Tailwind imports + custom theme
+│   │   └── api/
+│   │       ├── convert/route.ts        # Prose → AISP live preview
+│   │       ├── analyze/route.ts        # Convert + validate + gap analysis
+│   │       └── generate/route.ts       # Generate spec + unit tests + E2E tests
+│   ├── components/
+│   │   ├── AppShell.tsx                # Header + phase stepper + content area
+│   │   ├── SpecEditor.tsx              # Phase 1: split-view textarea + AISP preview
+│   │   ├── AnalysisView.tsx            # Phase 2: loading spinner with substep progress
+│   │   ├── ClarifyForm.tsx             # Phase 3: gap cards with input fields
+│   │   ├── OutputView.tsx              # Phase 4: tabbed output (spec, unit, e2e)
+│   │   ├── CodeBlock.tsx               # Syntax-highlighted code with copy button
+│   │   └── QualityBadge.tsx            # Tier badge (Platinum, Gold, Silver, etc.)
+│   ├── lib/
+│   │   ├── types.ts                    # Shared TypeScript types
+│   │   ├── aisp.ts                     # Server wrappers for converter/validator
+│   │   ├── prompts.ts                  # Claude system/user prompts (embeds CHEATSHEET.md)
+│   │   ├── analyze.ts                  # Claude gap analysis module
+│   │   ├── generate.ts                 # Claude output generation module
+│   │   └── examples.ts                 # Built-in example specs
+│   └── hooks/
+│       └── useSpecFlow.ts              # useReducer state machine for 4-phase flow
+```
+
+### API Routes
+
+| Endpoint | Input | Output | LLM? |
+|----------|-------|--------|------|
+| `POST /api/convert` | `{ prose }` | `{ output, tier, confidence, unmapped, tokens }` | No |
+| `POST /api/analyze` | `{ prose }` | `{ aisp, validation, gaps[], summary }` | Yes |
+| `POST /api/generate` | `{ prose, aisp, gaps[] }` | `{ finalSpec, vitestTests, playwrightTests }` | Yes |
+
+The `/api/convert` route is called on every keystroke (debounced 500ms) for the live preview. It uses only the deterministic Rosetta Stone mappings from `aisp-converter` and requires no API key.
+
+The `/api/analyze` and `/api/generate` routes call Claude (Sonnet) and require `ANTHROPIC_API_KEY` in `.env.local`.
+
+### Gap Analysis
+
+Claude analyzes specs across 8 categories of incompleteness:
+
+| Category | What it catches |
+|----------|----------------|
+| `ambiguous_term` | Terms that could mean multiple things |
+| `missing_definition` | Types or concepts used but never defined |
+| `incomplete_rule` | Business rules missing conditions or outcomes |
+| `undefined_type` | Data types referenced without structure |
+| `missing_error_case` | No handling for failure scenarios |
+| `missing_edge_case` | Boundary conditions and limits not addressed |
+| `conflicting_rule` | Rules that contradict each other |
+| `unquantified_statement` | Vague statements like "fast" without numbers |
+
+Each gap is assigned a severity (`critical`, `major`, `minor`), a question to ask the user, and an optional suggested answer.
+
+---
+
+## Try It Now — CLI (No Installation Required)
 
 ```bash
 # Convert natural language to AISP
@@ -175,6 +311,7 @@ npx aisp-validator validate myspec.aisp --min-tier gold
 | **[reference.md](reference.md)** | Complete 512-symbol glossary |
 | **[examples/](examples/)** | Copy-paste CLI examples by tier |
 | **[guides/advanced/](guides/advanced/)** | Deep dive into AISP internals |
+| **[webapp/](webapp/)** | AISP Spec Writer web application |
 
 ---
 
@@ -229,6 +366,31 @@ npm install -g aisp-converter aisp-validator
 
 # Option 3: Rust crate (fastest performance)
 cargo install aisp aisp-converter
+```
+
+---
+
+## Repository Structure
+
+```
+spec-writer-aisp/
+├── AI_GUIDE.md              # Official AISP 5.1 Platinum Specification
+├── HUMAN_GUIDE.md           # Tutorial for humans learning AISP
+├── CHEATSHEET.md            # Quick reference for symbol conversions
+├── reference.md             # Complete 512-symbol glossary
+├── examples/                # CLI examples by tier (minimal, standard, full)
+├── guides/advanced/         # Deep dive: physics, cognition, math, agents
+├── evidence/                # Real-world validation tests
+│   ├── tic-tac-toe/         # Comparative analysis (72/100 → 91/100)
+│   ├── rosetta-stone/       # 512 symbols validated at each tier
+│   ├── creative-short-story/# Creative domain: 98% alignment across LLMs
+│   └── e2e-conversion-guide/# Step-by-step conversion examples
+└── webapp/                  # AISP Spec Writer (Next.js 15 web app)
+    └── src/
+        ├── app/api/         # API routes (convert, analyze, generate)
+        ├── components/      # React UI components
+        ├── hooks/           # State management (useSpecFlow)
+        └── lib/             # AISP wrappers, Claude prompts, types
 ```
 
 ---

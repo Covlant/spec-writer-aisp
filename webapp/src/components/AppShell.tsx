@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { SpecEditor } from './SpecEditor';
 import { AnalysisView } from './AnalysisView';
 import { ClarifyForm } from './ClarifyForm';
 import { OutputView } from './OutputView';
+import { VersionHistoryModal } from './VersionHistoryModal';
 import type { UseSpecFlowReturn } from '@/hooks/useSpecFlow';
 
 type AppShellProps = {
@@ -38,22 +40,31 @@ function GeneratingView() {
 }
 
 export function AppShell({ flow }: AppShellProps) {
-  const { state, reset } = flow;
+  const { state, reset, restoreVersion } = flow;
   const currentIndex = phaseIndex(state.phase);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 min-h-screen flex flex-col">
       {/* Header */}
       <header className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-white">AISP Spec Writer</h1>
-        {state.phase !== 'write' && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={reset}
+            onClick={() => setShowVersionHistory(true)}
             className="text-sm text-gray-500 hover:text-gray-300 transition-colors cursor-pointer"
           >
-            Start Over
+            Version History
           </button>
-        )}
+          {state.phase !== 'write' && (
+            <button
+              onClick={reset}
+              className="text-sm text-gray-500 hover:text-gray-300 transition-colors cursor-pointer"
+            >
+              Start Over
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Phase stepper */}
@@ -103,6 +114,18 @@ export function AppShell({ flow }: AppShellProps) {
         {state.phase === 'generating' && <GeneratingView />}
         {state.phase === 'output' && <OutputView flow={flow} />}
       </div>
+
+      {/* Version History Modal */}
+      {showVersionHistory && (
+        <VersionHistoryModal
+          onClose={() => setShowVersionHistory(false)}
+          onRestore={(restoredState) => {
+            restoreVersion(restoredState);
+            setShowVersionHistory(false);
+          }}
+          currentState={state}
+        />
+      )}
     </div>
   );
 }

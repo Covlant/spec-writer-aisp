@@ -228,6 +228,31 @@ Respond with this exact JSON structure:
 Use "ready" if the answer is clear, specific, and resolves the gap. Use "needs_refinement" if the answer is vague, incomplete, or introduces new questions.`;
 }
 
+export function buildGapIntegratePrompt(gap: Gap, prose: string): string {
+  return `You are editing a product specification to incorporate a resolved gap.
+
+## Current Specification
+${prose}
+
+## Gap That Was Resolved
+- Category: ${gap.category}
+- Severity: ${gap.severity}
+- Location: ${gap.location}
+- Question: ${gap.question}
+- Context: ${gap.context}
+- Answer: ${gap.answer}
+
+## Your Task
+Rewrite the specification to naturally incorporate the gap's answer into the prose. Requirements:
+1. Integrate the answer seamlessly into the existing text at the appropriate location
+2. Do NOT remove or significantly restructure existing content
+3. The change should be minimal and surgical -- only add/modify what is needed to address this gap
+4. Keep the same writing style and tone
+5. Do NOT add any commentary or explanation -- return ONLY the updated specification text
+
+Return the complete updated specification text, nothing else.`;
+}
+
 export function buildGeneratePrompt(
   prose: string,
   aisp: string,

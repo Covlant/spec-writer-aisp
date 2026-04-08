@@ -8,6 +8,8 @@ import type {
   ConversionResult,
   AnalysisResult,
   GenerationResult,
+  ValidationResult,
+  ProseIntegration,
 } from '@/lib/types';
 import { EXAMPLES, type ExampleKey } from '@/lib/examples';
 
@@ -23,6 +25,18 @@ type Action =
   | { type: 'GAP_ANALYZE_START'; gapId: string }
   | { type: 'GAP_ANALYZE_SUCCESS'; gapId: string; status: GapStatus; feedback: string }
   | { type: 'GAP_ANALYZE_ERROR'; gapId: string; error: string }
+  | { type: 'GAP_INTEGRATE_START'; gapId: string }
+  | {
+      type: 'GAP_INTEGRATE_SUCCESS';
+      gapId: string;
+      updatedProse: string;
+      aisp: string;
+      validation: ValidationResult;
+    }
+  | { type: 'GAP_INTEGRATE_ERROR'; gapId: string }
+  | { type: 'APPROVE_INTEGRATION' }
+  | { type: 'REJECT_INTEGRATION' }
+  | { type: 'RESTORE_VERSION'; state: SpecFlowState }
   | { type: 'START_GENERATE' }
   | { type: 'GENERATE_SUCCESS'; result: GenerationResult }
   | { type: 'GENERATE_ERROR'; error: string }
@@ -38,6 +52,7 @@ function createInitialState(): SpecFlowState {
     gaps: [],
     generation: null,
     error: null,
+    pendingIntegration: null,
   };
 }
 
@@ -101,6 +116,65 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
         ),
       };
 
+    case 'GAP_INTEGRATE_START':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId ? { ...g, status: 'integrating' as GapStatus } : g,
+        ),
+      };
+
+    case 'GAP_INTEGRATE_SUCCESS':
+      return {
+        ...state,
+        pendingIntegration: {
+          gapId: action.gapId,
+          originalProse: state.prose,
+          updatedProse: action.updatedProse,
+          aisp: action.aisp,
+          validation: action.validation,
+        },
+      };
+
+    case 'GAP_INTEGRATE_ERROR':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId ? { ...g, status: 'ready' as GapStatus } : g,
+        ),
+      };
+
+    case 'APPROVE_INTEGRATION': {
+      const pi = state.pendingIntegration;
+      if (!pi) return state;
+      return {
+        ...state,
+        prose: pi.updatedProse,
+        pendingIntegration: null,
+        analysis: state.analysis
+          ? { ...state.analysis, aisp: pi.aisp, validation: pi.validation }
+          : state.analysis,
+        gaps: state.gaps.map((g) =>
+          g.id === pi.gapId ? { ...g, status: 'integrated' as GapStatus } : g,
+        ),
+      };
+    }
+
+    case 'REJECT_INTEGRATION': {
+      const pi = state.pendingIntegration;
+      if (!pi) return state;
+      return {
+        ...state,
+        pendingIntegration: null,
+        gaps: state.gaps.map((g) =>
+          g.id === pi.gapId ? { ...g, status: 'ready' as GapStatus } : g,
+        ),
+      };
+    }
+
+    case 'RESTORE_VERSION':
+      return { ...action.state };
+
     case 'START_GENERATE':
       return { ...state, phase: 'generating', error: null };
 
@@ -125,6 +199,20 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
   }
 }
 
+async function createVersionSnapshot(
+  label: string,
+  trigger: string,
+  state: SpecFlowState,
+): Promise<void> {
+  await fetch('/api/versions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label, trigger, state }),
+  }).catch(() => {
+    // versioning is best-effort
+  });
+}
+
 export type UseSpecFlowReturn = {
   state: SpecFlowState;
   setProse: (prose: string) => void;
@@ -135,6 +223,9 @@ export type UseSpecFlowReturn = {
   goBack: (toPhase: Phase) => void;
   loadExample: (key: ExampleKey) => void;
   reset: () => void;
+  restoreVersion: (restoredState: SpecFlowState) => Promise<void>;
+  approveIntegration: () => Promise<void>;
+  rejectIntegration: () => void;
   allRequiredGapsAnswered: boolean;
 };
 
@@ -142,6 +233,11 @@ export function useSpecFlow(): UseSpecFlowReturn {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedRef = useRef(false);
+  const stateRef = useRef(state);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Hydrate prose from localStorage on mount
   useEffect(() => {
@@ -200,12 +296,14 @@ export function useSpecFlow(): UseSpecFlowReturn {
   );
 
   const analyze = useCallback(async () => {
+    await createVersionSnapshot('Before analysis', 'pre_analyze', stateRef.current);
+
     dispatch({ type: 'START_ANALYZE' });
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prose: state.prose }),
+        body: JSON.stringify({ prose: stateRef.current.prose }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -222,7 +320,7 @@ export function useSpecFlow(): UseSpecFlowReturn {
         error: err instanceof Error ? err.message : 'Analysis failed',
       });
     }
-  }, [state.prose]);
+  }, []);
 
   const updateGapAnswer = useCallback((gapId: string, answer: string) => {
     dispatch({ type: 'UPDATE_GAP_ANSWER', gapId, answer });
@@ -230,7 +328,8 @@ export function useSpecFlow(): UseSpecFlowReturn {
 
   const analyzeGap = useCallback(
     async (gapId: string) => {
-      const gap = state.gaps.find((g) => g.id === gapId);
+      const currentState = stateRef.current;
+      const gap = currentState.gaps.find((g) => g.id === gapId);
       if (!gap?.answer?.trim()) return;
 
       dispatch({ type: 'GAP_ANALYZE_START', gapId });
@@ -238,7 +337,7 @@ export function useSpecFlow(): UseSpecFlowReturn {
         const res = await fetch('/api/analyze-gap', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gap, prose: state.prose }),
+          body: JSON.stringify({ gap, prose: currentState.prose }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -255,6 +354,38 @@ export function useSpecFlow(): UseSpecFlowReturn {
           status: data.status,
           feedback: data.feedback,
         });
+
+        // Auto-trigger integration when gap is ready
+        if (data.status === 'ready') {
+          const latestState = stateRef.current;
+          // Skip if another integration is already pending
+          if (latestState.pendingIntegration) return;
+
+          const resolvedGap = { ...gap, answer: gap.answer, status: 'ready' as GapStatus };
+          dispatch({ type: 'GAP_INTEGRATE_START', gapId });
+
+          try {
+            const intRes = await fetch('/api/integrate-gap', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prose: latestState.prose, gap: resolvedGap }),
+            });
+            const intData = await intRes.json();
+            if (intRes.ok) {
+              dispatch({
+                type: 'GAP_INTEGRATE_SUCCESS',
+                gapId,
+                updatedProse: intData.updatedProse,
+                aisp: intData.aisp,
+                validation: intData.validation,
+              });
+            } else {
+              dispatch({ type: 'GAP_INTEGRATE_ERROR', gapId });
+            }
+          } catch {
+            dispatch({ type: 'GAP_INTEGRATE_ERROR', gapId });
+          }
+        }
       } catch (err) {
         dispatch({
           type: 'GAP_ANALYZE_ERROR',
@@ -263,19 +394,20 @@ export function useSpecFlow(): UseSpecFlowReturn {
         });
       }
     },
-    [state.gaps, state.prose],
+    [],
   );
 
   const generate = useCallback(async () => {
     dispatch({ type: 'START_GENERATE' });
     try {
+      const currentState = stateRef.current;
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prose: state.prose,
-          aisp: state.analysis?.aisp ?? '',
-          gaps: state.gaps,
+          prose: currentState.prose,
+          aisp: currentState.analysis?.aisp ?? '',
+          gaps: currentState.gaps,
         }),
       });
       const data = await res.json();
@@ -287,13 +419,20 @@ export function useSpecFlow(): UseSpecFlowReturn {
         return;
       }
       dispatch({ type: 'GENERATE_SUCCESS', result: data });
+
+      // Snapshot after generation
+      await createVersionSnapshot('After generation', 'post_generate', {
+        ...stateRef.current,
+        phase: 'output',
+        generation: data,
+      });
     } catch (err) {
       dispatch({
         type: 'GENERATE_ERROR',
         error: err instanceof Error ? err.message : 'Generation failed',
       });
     }
-  }, [state.prose, state.analysis, state.gaps]);
+  }, []);
 
   const goBack = useCallback((toPhase: Phase) => {
     dispatch({ type: 'GO_BACK', toPhase });
@@ -316,9 +455,35 @@ export function useSpecFlow(): UseSpecFlowReturn {
     dispatch({ type: 'RESET' });
   }, []);
 
+  const restoreVersion = useCallback(async (restoredState: SpecFlowState) => {
+    await createVersionSnapshot('Before rollback', 'rollback', stateRef.current);
+    dispatch({ type: 'RESTORE_VERSION', state: restoredState });
+  }, []);
+
+  const approveIntegration = useCallback(async () => {
+    const currentState = stateRef.current;
+    const pi = currentState.pendingIntegration;
+    if (!pi) return;
+
+    const gapQuestion = currentState.gaps.find((g) => g.id === pi.gapId)?.question ?? 'gap';
+    await createVersionSnapshot(
+      `Before integrating: ${gapQuestion.slice(0, 60)}`,
+      'gap_integrated',
+      currentState,
+    );
+    dispatch({ type: 'APPROVE_INTEGRATION' });
+  }, []);
+
+  const rejectIntegration = useCallback(() => {
+    dispatch({ type: 'REJECT_INTEGRATION' });
+  }, []);
+
   const allRequiredGapsAnswered = state.gaps
     .filter((g) => g.severity === 'critical' || g.severity === 'major')
-    .every((g) => g.answer && g.answer.trim().length > 0);
+    .every(
+      (g) =>
+        g.status === 'integrated' || (g.answer && g.answer.trim().length > 0),
+    );
 
   return {
     state,
@@ -330,6 +495,9 @@ export function useSpecFlow(): UseSpecFlowReturn {
     goBack,
     loadExample,
     reset,
+    restoreVersion,
+    approveIntegration,
+    rejectIntegration,
     allRequiredGapsAnswered,
   };
 }

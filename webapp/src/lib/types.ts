@@ -37,7 +37,13 @@ export type ValidationResult = {
   pureDensity: number;
 };
 
-export type GapStatus = 'pending' | 'analyzing' | 'needs_refinement' | 'ready';
+export type GapStatus =
+  | 'pending'
+  | 'analyzing'
+  | 'needs_refinement'
+  | 'ready'
+  | 'integrating'
+  | 'integrated';
 
 export type Gap = {
   id: string;
@@ -65,6 +71,14 @@ export type GenerationResult = {
   playwrightTests: string;
 };
 
+export type ProseIntegration = {
+  gapId: string;
+  originalProse: string;
+  updatedProse: string;
+  aisp: string;
+  validation: ValidationResult;
+};
+
 export type SpecFlowState = {
   phase: Phase;
   prose: string;
@@ -73,4 +87,5 @@ export type SpecFlowState = {
   gaps: Gap[];
   generation: GenerationResult | null;
   error: string | null;
+  pendingIntegration: ProseIntegration | null;
 };

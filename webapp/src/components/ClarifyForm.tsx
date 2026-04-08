@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { QualityBadge } from './QualityBadge';
 import { CodeBlock } from './CodeBlock';
+import { IntegrationDiffModal } from './IntegrationDiffModal';
 import type { UseSpecFlowReturn } from '@/hooks/useSpecFlow';
 import type { Gap, GapStatus } from '@/lib/types';
 
@@ -32,6 +33,8 @@ const STATUS_INDICATOR: Record<GapStatus, { label: string; className: string; ic
   analyzing: { label: 'Analyzing', className: 'text-blue-400', icon: '◌' },
   needs_refinement: { label: 'Refine', className: 'text-amber-400', icon: '⚠' },
   ready: { label: 'Ready', className: 'text-green-400', icon: '✓' },
+  integrating: { label: 'Integrating', className: 'text-blue-400', icon: '◌' },
+  integrated: { label: 'Integrated', className: 'text-emerald-400', icon: '✓✓' },
 };
 
 const STATUS_DOT: Record<GapStatus, string> = {
@@ -39,6 +42,8 @@ const STATUS_DOT: Record<GapStatus, string> = {
   analyzing: 'bg-blue-400 animate-pulse',
   needs_refinement: 'bg-amber-400',
   ready: 'bg-green-400',
+  integrating: 'bg-blue-400 animate-pulse',
+  integrated: 'bg-emerald-400',
 };
 
 function AispModal({
@@ -132,6 +137,8 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
     analyzeGap,
     generate,
     goBack,
+    approveIntegration,
+    rejectIntegration,
     allRequiredGapsAnswered,
   } = flow;
   const { analysis, gaps } = state;
@@ -141,12 +148,16 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
   const answeredCount = gaps.filter(
     (g) => g.answer && g.answer.trim().length > 0,
   ).length;
+  const integratedCount = gaps.filter((g) => g.status === 'integrated').length;
   const requiredCount = gaps.filter(
     (g) => g.severity === 'critical' || g.severity === 'major',
   ).length;
   const requiredAnswered = gaps
     .filter((g) => g.severity === 'critical' || g.severity === 'major')
-    .filter((g) => g.answer && g.answer.trim().length > 0).length;
+    .filter(
+      (g) =>
+        g.status === 'integrated' || (g.answer && g.answer.trim().length > 0),
+    ).length;
   const readyCount = gaps.filter((g) => g.status === 'ready').length;
 
   const sorted = [...gaps].sort((a, b) => {
@@ -175,6 +186,9 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
       <div className="flex items-center justify-between text-sm">
         <span className="text-gray-400">
           {answeredCount} of {gaps.length} gaps answered
+          {integratedCount > 0 && (
+            <span className="text-emerald-400"> ({integratedCount} integrated)</span>
+          )}
           {requiredCount > 0 && (
             <span className="text-gray-500">
               {' '}
@@ -213,6 +227,9 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
               {readyCount > 0 && (
                 <span className="text-green-400">{readyCount} ready</span>
               )}
+              {integratedCount > 0 && (
+                <span className="text-emerald-400">{integratedCount} integrated</span>
+              )}
             </div>
             {analysis?.aisp && (
               <button
@@ -242,19 +259,26 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
         <div className="flex-1 flex flex-col gap-4 min-w-0">
           {sorted.map((gap) => {
             const statusInfo = STATUS_INDICATOR[gap.status];
+            const isIntegrated = gap.status === 'integrated';
+            const isIntegrating = gap.status === 'integrating';
             const canAnalyze =
-              gap.answer?.trim() && gap.status !== 'analyzing';
+              !isIntegrated &&
+              !isIntegrating &&
+              gap.answer?.trim() &&
+              gap.status !== 'analyzing';
 
             return (
               <div
                 key={gap.id}
                 id={`gap-card-${gap.id}`}
                 className={`p-4 bg-gray-900 rounded-lg border ${
-                  gap.status === 'ready'
-                    ? 'border-green-500/30'
-                    : gap.status === 'needs_refinement'
-                      ? 'border-amber-500/30'
-                      : 'border-gray-800'
+                  isIntegrated
+                    ? 'border-emerald-500/30'
+                    : gap.status === 'ready'
+                      ? 'border-green-500/30'
+                      : gap.status === 'needs_refinement'
+                        ? 'border-amber-500/30'
+                        : 'border-gray-800'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-3">
@@ -275,11 +299,12 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
                     <span
                       className={`text-xs font-medium ml-auto ${statusInfo.className}`}
                     >
-                      {gap.status === 'analyzing' && (
+                      {(gap.status === 'analyzing' || isIntegrating) && (
                         <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-1 align-middle" />
                       )}
                       {gap.status === 'ready' && '✓ '}
                       {gap.status === 'needs_refinement' && '⚠ '}
+                      {isIntegrated && '✓✓ '}
                       {statusInfo.label}
                     </span>
                   )}
@@ -293,49 +318,58 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
                 </label>
                 <p className="text-sm text-gray-500 mb-3">{gap.context}</p>
 
-                <div className="flex gap-2 items-start">
-                  <textarea
-                    id={`gap-${gap.id}`}
-                    value={gap.answer ?? ''}
-                    onChange={(e) => updateGapAnswer(gap.id, e.target.value)}
-                    onFocus={() => setActiveGapId(gap.id)}
-                    placeholder={gap.suggestion ?? 'Your answer...'}
-                    rows={2}
-                    className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                  <button
-                    onClick={() => analyzeGap(gap.id)}
-                    disabled={!canAnalyze}
-                    className="px-3 py-2.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0"
-                  >
-                    {gap.status === 'analyzing' ? (
-                      <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      'Analyze'
-                    )}
-                  </button>
-                </div>
-
-                {gap.feedback && gap.status !== 'pending' && (
-                  <div
-                    className={`mt-3 p-3 rounded-md text-sm ${
-                      gap.status === 'ready'
-                        ? 'bg-green-500/10 border border-green-500/20 text-green-300'
-                        : 'bg-amber-500/10 border border-amber-500/20 text-amber-300'
-                    }`}
-                  >
-                    {gap.feedback}
+                {isIntegrated ? (
+                  <div className="p-3 rounded-md text-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                    This gap has been integrated into the specification.
                   </div>
-                )}
+                ) : (
+                  <>
+                    <div className="flex gap-2 items-start">
+                      <textarea
+                        id={`gap-${gap.id}`}
+                        value={gap.answer ?? ''}
+                        onChange={(e) => updateGapAnswer(gap.id, e.target.value)}
+                        onFocus={() => setActiveGapId(gap.id)}
+                        placeholder={gap.suggestion ?? 'Your answer...'}
+                        rows={2}
+                        disabled={isIntegrating}
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                      />
+                      <button
+                        onClick={() => analyzeGap(gap.id)}
+                        disabled={!canAnalyze}
+                        className="px-3 py-2.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0"
+                      >
+                        {gap.status === 'analyzing' || isIntegrating ? (
+                          <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          'Analyze'
+                        )}
+                      </button>
+                    </div>
 
-                {gap.suggestion && !gap.answer && (
-                  <button
-                    onClick={() => updateGapAnswer(gap.id, gap.suggestion!)}
-                    className="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
-                  >
-                    Use suggestion: &ldquo;{gap.suggestion.slice(0, 80)}
-                    {gap.suggestion.length > 80 ? '...' : ''}&rdquo;
-                  </button>
+                    {gap.feedback && gap.status !== 'pending' && (
+                      <div
+                        className={`mt-3 p-3 rounded-md text-sm ${
+                          gap.status === 'ready'
+                            ? 'bg-green-500/10 border border-green-500/20 text-green-300'
+                            : 'bg-amber-500/10 border border-amber-500/20 text-amber-300'
+                        }`}
+                      >
+                        {gap.feedback}
+                      </div>
+                    )}
+
+                    {gap.suggestion && !gap.answer && (
+                      <button
+                        onClick={() => updateGapAnswer(gap.id, gap.suggestion!)}
+                        className="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+                      >
+                        Use suggestion: &ldquo;{gap.suggestion.slice(0, 80)}
+                        {gap.suggestion.length > 80 ? '...' : ''}&rdquo;
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -348,6 +382,16 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
         <AispModal
           aisp={analysis.aisp}
           onClose={() => setShowAispModal(false)}
+        />
+      )}
+
+      {/* Integration diff modal */}
+      {state.pendingIntegration && (
+        <IntegrationDiffModal
+          integration={state.pendingIntegration}
+          gap={gaps.find((g) => g.id === state.pendingIntegration!.gapId)!}
+          onApprove={approveIntegration}
+          onReject={rejectIntegration}
         />
       )}
 

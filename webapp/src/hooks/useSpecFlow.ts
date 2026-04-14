@@ -15,6 +15,20 @@ import { EXAMPLES, type ExampleKey } from '@/lib/examples';
 
 const STORAGE_KEY = 'aisp-specflow-prose';
 
+function extractProseFromJson(text: string): string {
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const jsonStr = fenceMatch ? fenceMatch[1] : text;
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && typeof parsed === 'object' && typeof parsed.updated_specification === 'string') {
+      return parsed.updated_specification.replace(/\\n/g, '\n');
+    }
+  } catch {
+    // not JSON, return as-is
+  }
+  return text;
+}
+
 type Action =
   | { type: 'SET_PROSE'; prose: string }
   | { type: 'SET_PREVIEW'; preview: ConversionResult | null }
@@ -130,7 +144,7 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
         pendingIntegration: {
           gapId: action.gapId,
           originalProse: state.prose,
-          updatedProse: action.updatedProse,
+          updatedProse: extractProseFromJson(action.updatedProse),
           aisp: action.aisp,
           validation: action.validation,
         },
@@ -246,7 +260,7 @@ export function useSpecFlow(): UseSpecFlowReturn {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        dispatch({ type: 'SET_PROSE', prose: saved });
+        dispatch({ type: 'SET_PROSE', prose: extractProseFromJson(saved) });
       }
     } catch {
       // localStorage unavailable

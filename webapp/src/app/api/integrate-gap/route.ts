@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { AISP_SYSTEM_PROMPT, buildGapIntegratePrompt } from '@/lib/prompts';
+import { buildGapIntegratePrompt } from '@/lib/prompts';
+import { parseJsonFromResponse } from '@/lib/analyze';
 import { convertProse, validateAisp } from '@/lib/aisp';
 import type { Gap } from '@/lib/types';
 
@@ -29,7 +30,6 @@ export async function POST(request: Request) {
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 4096,
-      system: AISP_SYSTEM_PROMPT,
       messages: [
         {
           role: 'user',
@@ -38,8 +38,16 @@ export async function POST(request: Request) {
       ],
     });
 
-    const updatedProse =
+    const responseText =
       message.content[0].type === 'text' ? message.content[0].text : '';
+
+    let updatedProse = responseText;
+    const parsed = parseJsonFromResponse(responseText) as
+      | { updated_specification?: string }
+      | undefined;
+    if (parsed && typeof parsed.updated_specification === 'string') {
+      updatedProse = parsed.updated_specification;
+    }
 
     const conversion = convertProse(updatedProse);
     const validation = await validateAisp(conversion.output);

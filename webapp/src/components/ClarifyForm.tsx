@@ -1,11 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { QualityBadge } from './QualityBadge';
 import { CodeBlock } from './CodeBlock';
 import { IntegrationDiffModal } from './IntegrationDiffModal';
+import { DetailDial } from './DetailDial';
+import { AggregateDetailHistogram } from './AggregateDetailHistogram';
+import { SpecItemCard } from './SpecItemCard';
 import type { UseSpecFlowReturn } from '@/hooks/useSpecFlow';
-import type { Gap, GapStatus } from '@/lib/types';
+import type { DetailLevel, Gap, GapStatus } from '@/lib/types';
+import {
+  getAggregateDistribution,
+  getGapMaxFilledLevel,
+  getGapRenderedLevel,
+  getItemMaxFilledLevel,
+} from '@/lib/detail-level';
 
 type ClarifyFormProps = {
   flow: UseSpecFlowReturn;
@@ -140,10 +149,23 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
     approveIntegration,
     rejectIntegration,
     allRequiredGapsAnswered,
+    setViewLevel,
+    setItemViewOverride,
+    setGapViewOverride,
+    upsertItemLevelContent,
+    elaborateItem,
+    removeItem,
   } = flow;
-  const { analysis, gaps } = state;
+  const { analysis, gaps, items, viewLevel } = state;
   const [showAispModal, setShowAispModal] = useState(false);
   const [activeGapId, setActiveGapId] = useState<string | null>(null);
+  const [filterLevel, setFilterLevel] = useState<DetailLevel | null>(null);
+  const [showGapDialFor, setShowGapDialFor] = useState<string | null>(null);
+
+  const aggregate = useMemo(
+    () => getAggregateDistribution(items, gaps),
+    [items, gaps],
+  );
 
   const answeredCount = gaps.filter(
     (g) => g.answer && g.answer.trim().length > 0,
@@ -164,6 +186,22 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
     const order = { critical: 0, major: 1, minor: 2 };
     return order[a.severity] - order[b.severity];
   });
+
+  const filteredItems = useMemo(
+    () =>
+      filterLevel === null
+        ? items
+        : items.filter((it) => getItemMaxFilledLevel(it) === filterLevel),
+    [items, filterLevel],
+  );
+
+  const filteredGaps = useMemo(
+    () =>
+      filterLevel === null
+        ? sorted
+        : sorted.filter((g) => getGapMaxFilledLevel(g) === filterLevel),
+    [sorted, filterLevel],
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -208,6 +246,29 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
       <div className="flex flex-col md:flex-row gap-4">
         {/* Left sidebar: assessment */}
         <div className="md:w-64 shrink-0 flex flex-col gap-3">
+          {/* Detail level dial */}
+          <div className="p-3 bg-gray-900 rounded-lg border border-gray-800 flex flex-col gap-2">
+            <span className="text-xs text-gray-400">Detail level</span>
+            <DetailDial value={viewLevel} onChange={setViewLevel} />
+            <div className="border-t border-gray-800 pt-2 mt-1">
+              <AggregateDetailHistogram
+                distribution={aggregate.distribution}
+                total={aggregate.total}
+                average={aggregate.average}
+                selectedLevel={filterLevel}
+                onSelectLevel={setFilterLevel}
+              />
+              {filterLevel !== null && (
+                <button
+                  onClick={() => setFilterLevel(null)}
+                  className="mt-1 text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                >
+                  Clear filter
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Summary card */}
           <div className="p-3 bg-gray-900 rounded-lg border border-gray-800">
             <p className="text-xs text-gray-400 leading-relaxed mb-2">
@@ -243,21 +304,59 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
 
           {/* Gap list */}
           <div className="flex flex-col gap-1.5">
-            {sorted.map((gap, i) => (
+            {filteredGaps.map((gap, i) => (
               <SidebarGapCard
                 key={gap.id}
                 gap={gap}
-                index={i}
+                index={sorted.indexOf(gap)}
                 isActive={activeGapId === gap.id}
                 onClick={() => scrollToGap(gap.id)}
               />
             ))}
+            {filteredGaps.length === 0 && filterLevel !== null && (
+              <span className="text-[10px] text-gray-600 px-1">
+                No gaps at L{filterLevel}.
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Right: gap detail cards */}
+        {/* Right: items + gap detail cards */}
         <div className="flex-1 flex flex-col gap-4 min-w-0">
-          {sorted.map((gap) => {
+          {filteredItems.length > 0 && (
+            <div className="flex flex-col gap-3">
+              <h3 className="text-sm font-medium text-gray-300">
+                Spec items
+                <span className="ml-2 text-xs text-gray-600">
+                  {filteredItems.length} of {items.length}
+                </span>
+              </h3>
+              {filteredItems.map((item) => (
+                <SpecItemCard
+                  key={item.id}
+                  item={item}
+                  globalLevel={viewLevel}
+                  onSetOverride={(lvl) => setItemViewOverride(item.id, lvl)}
+                  onUpsertContent={(lvl, content) =>
+                    upsertItemLevelContent(item.id, lvl, content)
+                  }
+                  onElaborate={(target) => elaborateItem(item.id, target)}
+                  onRemove={() => removeItem(item.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {filteredGaps.length > 0 && (
+            <h3 className="text-sm font-medium text-gray-300 mt-2">
+              Gaps
+              <span className="ml-2 text-xs text-gray-600">
+                {filteredGaps.length} of {gaps.length}
+              </span>
+            </h3>
+          )}
+
+          {filteredGaps.map((gap) => {
             const statusInfo = STATUS_INDICATOR[gap.status];
             const isIntegrated = gap.status === 'integrated';
             const isIntegrating = gap.status === 'integrating';
@@ -266,6 +365,13 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
               !isIntegrating &&
               gap.answer?.trim() &&
               gap.status !== 'analyzing';
+            const renderedLevel = getGapRenderedLevel(gap, viewLevel);
+            const maxFilled = getGapMaxFilledLevel(gap);
+            const showContext = renderedLevel >= 2;
+            const showAnswer = renderedLevel >= 3;
+            const showFeedback = renderedLevel >= 4;
+            const showSuggestion = renderedLevel >= 4;
+            const showIntegrated = renderedLevel >= 5;
 
             return (
               <div
@@ -295,19 +401,51 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
                       &bull; {gap.location}
                     </span>
                   )}
-                  {statusInfo.label && gap.status !== 'pending' && (
-                    <span
-                      className={`text-xs font-medium ml-auto ${statusInfo.className}`}
-                    >
-                      {(gap.status === 'analyzing' || isIntegrating) && (
-                        <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-1 align-middle" />
+                  <div className="ml-auto flex items-center gap-2">
+                    {statusInfo.label && gap.status !== 'pending' && (
+                      <span className={`text-xs font-medium ${statusInfo.className}`}>
+                        {(gap.status === 'analyzing' || isIntegrating) && (
+                          <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-1 align-middle" />
+                        )}
+                        {gap.status === 'ready' && '✓ '}
+                        {gap.status === 'needs_refinement' && '⚠ '}
+                        {isIntegrated && '✓✓ '}
+                        {statusInfo.label}
+                      </span>
+                    )}
+                    <div className="relative">
+                      <button
+                        onClick={() =>
+                          setShowGapDialFor((cur) =>
+                            cur === gap.id ? null : gap.id,
+                          )
+                        }
+                        className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 cursor-pointer"
+                        title={`Showing L${renderedLevel}, max content L${maxFilled}`}
+                      >
+                        L{renderedLevel}
+                        <span className="text-gray-600"> / L{maxFilled}</span>
+                      </button>
+                      {showGapDialFor === gap.id && (
+                        <div className="absolute right-0 top-full mt-1 z-10 p-2 bg-gray-900 border border-gray-700 rounded-md shadow-lg">
+                          <DetailDial
+                            size="sm"
+                            showLabels={false}
+                            value={gap.viewOverride ?? viewLevel}
+                            followGlobal={gap.viewOverride === undefined}
+                            onChange={(lvl) => {
+                              setGapViewOverride(gap.id, lvl);
+                              setShowGapDialFor(null);
+                            }}
+                            onFollowGlobal={() => {
+                              setGapViewOverride(gap.id, undefined);
+                              setShowGapDialFor(null);
+                            }}
+                          />
+                        </div>
                       )}
-                      {gap.status === 'ready' && '✓ '}
-                      {gap.status === 'needs_refinement' && '⚠ '}
-                      {isIntegrated && '✓✓ '}
-                      {statusInfo.label}
-                    </span>
-                  )}
+                    </div>
+                  </div>
                 </div>
 
                 <label
@@ -316,64 +454,80 @@ export function ClarifyForm({ flow }: ClarifyFormProps) {
                 >
                   {gap.question}
                 </label>
-                <p className="text-sm text-gray-500 mb-3">{gap.context}</p>
+                {showContext && gap.context && (
+                  <p className="text-sm text-gray-500 mb-3">{gap.context}</p>
+                )}
 
-                {isIntegrated ? (
-                  <div className="p-3 rounded-md text-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
-                    This gap has been integrated into the specification.
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex gap-2 items-start">
-                      <textarea
-                        id={`gap-${gap.id}`}
-                        value={gap.answer ?? ''}
-                        onChange={(e) => updateGapAnswer(gap.id, e.target.value)}
-                        onFocus={() => setActiveGapId(gap.id)}
-                        placeholder={gap.suggestion ?? 'Your answer...'}
-                        rows={2}
-                        disabled={isIntegrating}
-                        className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-                      />
-                      <button
-                        onClick={() => analyzeGap(gap.id)}
-                        disabled={!canAnalyze}
-                        className="px-3 py-2.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0"
-                      >
-                        {gap.status === 'analyzing' || isIntegrating ? (
-                          <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          'Analyze'
-                        )}
-                      </button>
+                {!showAnswer && renderedLevel < 3 && (
+                  <p className="text-[11px] text-gray-600 italic">
+                    Increase detail to L3 to answer this gap.
+                  </p>
+                )}
+
+                {showAnswer && (
+                  isIntegrated && showIntegrated ? (
+                    <div className="p-3 rounded-md text-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                      This gap has been integrated into the specification.
                     </div>
-
-                    {gap.feedback && gap.status !== 'pending' && (
-                      <div
-                        className={`mt-3 p-3 rounded-md text-sm ${
-                          gap.status === 'ready'
-                            ? 'bg-green-500/10 border border-green-500/20 text-green-300'
-                            : 'bg-amber-500/10 border border-amber-500/20 text-amber-300'
-                        }`}
-                      >
-                        {gap.feedback}
+                  ) : (
+                    <>
+                      <div className="flex gap-2 items-start">
+                        <textarea
+                          id={`gap-${gap.id}`}
+                          value={gap.answer ?? ''}
+                          onChange={(e) => updateGapAnswer(gap.id, e.target.value)}
+                          onFocus={() => setActiveGapId(gap.id)}
+                          placeholder={gap.suggestion ?? 'Your answer...'}
+                          rows={2}
+                          disabled={isIntegrating}
+                          className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-3 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                        />
+                        <button
+                          onClick={() => analyzeGap(gap.id)}
+                          disabled={!canAnalyze}
+                          className="px-3 py-2.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0"
+                        >
+                          {gap.status === 'analyzing' || isIntegrating ? (
+                            <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            'Analyze'
+                          )}
+                        </button>
                       </div>
-                    )}
 
-                    {gap.suggestion && !gap.answer && (
-                      <button
-                        onClick={() => updateGapAnswer(gap.id, gap.suggestion!)}
-                        className="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
-                      >
-                        Use suggestion: &ldquo;{gap.suggestion.slice(0, 80)}
-                        {gap.suggestion.length > 80 ? '...' : ''}&rdquo;
-                      </button>
-                    )}
-                  </>
+                      {showFeedback && gap.feedback && gap.status !== 'pending' && (
+                        <div
+                          className={`mt-3 p-3 rounded-md text-sm ${
+                            gap.status === 'ready'
+                              ? 'bg-green-500/10 border border-green-500/20 text-green-300'
+                              : 'bg-amber-500/10 border border-amber-500/20 text-amber-300'
+                          }`}
+                        >
+                          {gap.feedback}
+                        </div>
+                      )}
+
+                      {showSuggestion && gap.suggestion && !gap.answer && (
+                        <button
+                          onClick={() => updateGapAnswer(gap.id, gap.suggestion!)}
+                          className="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer"
+                        >
+                          Use suggestion: &ldquo;{gap.suggestion.slice(0, 80)}
+                          {gap.suggestion.length > 80 ? '...' : ''}&rdquo;
+                        </button>
+                      )}
+                    </>
+                  )
                 )}
               </div>
             );
           })}
+
+          {filteredItems.length === 0 && filteredGaps.length === 0 && filterLevel !== null && (
+            <div className="text-sm text-gray-500 italic p-4 bg-gray-900 rounded-lg border border-gray-800">
+              No items or gaps at L{filterLevel}. Clear the filter to see all.
+            </div>
+          )}
         </div>
       </div>
 

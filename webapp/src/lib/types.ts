@@ -45,6 +45,26 @@ export type GapStatus =
   | 'integrating'
   | 'integrated';
 
+export type DetailLevel = 1 | 2 | 3 | 4 | 5;
+
+export const DETAIL_LEVEL_LABELS: Record<DetailLevel, string> = {
+  1: 'Headline',
+  2: 'Summary',
+  3: 'Functional',
+  4: 'Impl',
+  5: 'Exhaustive',
+};
+
+export type SpecItemKind = 'requirement' | 'behavior' | 'constraint' | 'note';
+
+export type SpecItem = {
+  id: string;
+  title: string;
+  kind?: SpecItemKind;
+  levels: Partial<Record<DetailLevel, string>>;
+  viewOverride?: DetailLevel;
+};
+
 export type Gap = {
   id: string;
   category: GapCategory;
@@ -56,6 +76,7 @@ export type Gap = {
   answer?: string;
   status: GapStatus;
   feedback?: string;
+  viewOverride?: DetailLevel;
 };
 
 export type AnalysisResult = {
@@ -88,4 +109,6 @@ export type SpecFlowState = {
   generation: GenerationResult | null;
   error: string | null;
   pendingIntegration: ProseIntegration | null;
+  items: SpecItem[];
+  viewLevel: DetailLevel;
 };

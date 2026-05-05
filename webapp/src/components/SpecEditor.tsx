@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { CodeBlock } from './CodeBlock';
 import { QualityBadge } from './QualityBadge';
 import { EXAMPLES, type ExampleKey } from '@/lib/examples';
@@ -10,8 +11,18 @@ type SpecEditorProps = {
 };
 
 export function SpecEditor({ flow }: SpecEditorProps) {
-  const { state, setProse, analyze, loadExample } = flow;
+  const { state, setProse, analyze, loadExample, extractItemsFromProse } = flow;
   const preview = state.livePreview;
+  const [extracting, setExtracting] = useState(false);
+
+  const handleExtract = async () => {
+    setExtracting(true);
+    try {
+      await extractItemsFromProse();
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -72,7 +83,7 @@ Example: Build a tic-tac-toe game for two players. The game board is a 3x3 grid.
 
       {/* Actions bar */}
       <div className="flex items-center justify-between border-t border-gray-800 pt-4">
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center flex-wrap">
           {(Object.keys(EXAMPLES) as ExampleKey[]).map((key) => (
             <button
               key={key}
@@ -82,6 +93,25 @@ Example: Build a tic-tac-toe game for two players. The game board is a 3x3 grid.
               Load: {EXAMPLES[key].name}
             </button>
           ))}
+          {state.items.length === 0 && state.prose.trim() && (
+            <button
+              onClick={handleExtract}
+              disabled={extracting}
+              className="px-3 py-1.5 text-xs rounded bg-purple-600/20 hover:bg-purple-600/30 disabled:opacity-60 text-purple-300 border border-purple-500/30 transition-colors cursor-pointer disabled:cursor-not-allowed"
+              title="Break the prose into structured items with detail levels"
+            >
+              {extracting ? (
+                <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin align-middle" />
+              ) : (
+                'Convert to structured items'
+              )}
+            </button>
+          )}
+          {state.items.length > 0 && (
+            <span className="text-xs text-gray-500">
+              {state.items.length} structured item{state.items.length === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
         <button
           onClick={analyze}

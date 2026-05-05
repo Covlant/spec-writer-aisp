@@ -1,4 +1,10 @@
-import type { ValidationResult, Gap, GapStatus } from './types';
+import type {
+  ValidationResult,
+  Gap,
+  GapStatus,
+  DetailLevel,
+  SpecItem,
+} from './types';
 
 const CHEATSHEET = `## AISP Symbol Reference
 
@@ -251,6 +257,85 @@ Rewrite the specification to naturally incorporate the gap's answer into the pro
 5. Do NOT add any commentary or explanation -- return ONLY the updated specification text
 
 Return the complete updated specification text, nothing else.`;
+}
+
+const DETAIL_LEVEL_RUBRIC = `## Detail Level Rubric (1-5)
+Each level adds detail without contradicting lower levels. Higher levels include all detail of lower levels plus the additions below.
+
+- L1 Headline (one sentence): pure intent of the item. Example: "Users can export their data."
+- L2 Summary (1-2 sentences): adds the primary surface and shape. Example: "From Settings, users can export their account data as a CSV file."
+- L3 Functional (1 short paragraph): adds the user flow, inputs/outputs, and core acceptance criteria. Example: "On Settings → Data, the user clicks Export, picks CSV or JSON, and receives a signed download link by email within 5 minutes; limited to one export per day per user."
+- L4 Implementation-ready (a paragraph or two): adds edge cases, error states, validation rules, and data contracts. Includes specific numbers, formats, and behaviors at boundaries.
+- L5 Exhaustive (multi-paragraph or structured): adds non-functional requirements: security, observability, accessibility, rollout, ops, audit, telemetry, runbooks.`;
+
+export function buildElaborateItemPrompt(
+  item: SpecItem,
+  sourceLevel: DetailLevel | 0,
+  targetLevel: DetailLevel,
+  fullSpecContext: string,
+): string {
+  const sourceContent =
+    sourceLevel === 0 ? '' : (item.levels[sourceLevel] ?? '');
+  return `You are elaborating one item of a product specification to a higher detail level.
+
+${DETAIL_LEVEL_RUBRIC}
+
+## Surrounding Specification (for context only)
+${fullSpecContext || '(none provided)'}
+
+## Item Being Elaborated
+- Title: ${item.title}
+- Kind: ${item.kind ?? 'requirement'}
+
+## Existing Content${sourceLevel === 0 ? ' (none)' : ` at L${sourceLevel}`}
+${sourceContent || '(empty)'}
+
+## Your Task
+Produce content for this item at **L${targetLevel}**. The result must:
+1. Stay consistent with the existing content (do not contradict it).
+2. Match the L${targetLevel} rubric above — add only what L${targetLevel} demands beyond the existing level.
+3. Keep the same writing style and voice.
+4. Be a self-contained block of prose, not a delta. The user will read it as the new L${targetLevel} content for this item.
+5. Do not invent unrelated requirements. Stay focused on this specific item.
+
+Respond with this exact JSON structure:
+{
+  "draft": "The L${targetLevel} content for this item, as plain prose..."
+}`;
+}
+
+export function buildExtractItemsPrompt(prose: string): string {
+  return `You are converting a free-form product specification into a structured list of items.
+
+${DETAIL_LEVEL_RUBRIC}
+
+## Source Prose
+${prose}
+
+## Your Task
+Identify the distinct atomic items in the prose (requirements, behaviors, constraints, notes). For each item, decide which detail level its current content best matches based on the rubric above, and place that content at that level.
+
+Rules:
+- Each item must have a short \`title\` (3-7 words).
+- Choose \`kind\` from: requirement, behavior, constraint, note.
+- Place the existing content under the level it best matches (typically L2 or L3). Do NOT invent content at higher levels.
+- Do NOT split content across multiple levels — pick one level for the source content per item.
+- Do NOT lose content: every meaningful sentence in the prose must end up in some item's level.
+- Item ids must be stable, kebab-case identifiers derived from the title.
+
+Respond with this exact JSON structure:
+{
+  "items": [
+    {
+      "id": "export-feature",
+      "title": "Export feature",
+      "kind": "requirement",
+      "levels": {
+        "2": "From Settings, users can export their account data as a CSV file."
+      }
+    }
+  ]
+}`;
 }
 
 export function buildGeneratePrompt(

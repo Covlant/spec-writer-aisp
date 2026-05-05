@@ -10,6 +10,8 @@ import type {
   GenerationResult,
   ValidationResult,
   ProseIntegration,
+  DetailLevel,
+  SpecItem,
 } from '@/lib/types';
 import { EXAMPLES, type ExampleKey } from '@/lib/examples';
 
@@ -55,6 +57,13 @@ type Action =
   | { type: 'GENERATE_SUCCESS'; result: GenerationResult }
   | { type: 'GENERATE_ERROR'; error: string }
   | { type: 'GO_BACK'; toPhase: Phase }
+  | { type: 'SET_VIEW_LEVEL'; level: DetailLevel }
+  | { type: 'SET_ITEM_VIEW_OVERRIDE'; itemId: string; level: DetailLevel | undefined }
+  | { type: 'SET_GAP_VIEW_OVERRIDE'; gapId: string; level: DetailLevel | undefined }
+  | { type: 'UPSERT_ITEM_LEVEL_CONTENT'; itemId: string; level: DetailLevel; content: string }
+  | { type: 'SET_ITEMS'; items: SpecItem[] }
+  | { type: 'ADD_ITEM'; item: SpecItem }
+  | { type: 'REMOVE_ITEM'; itemId: string }
   | { type: 'RESET' };
 
 function createInitialState(): SpecFlowState {
@@ -67,6 +76,8 @@ function createInitialState(): SpecFlowState {
     generation: null,
     error: null,
     pendingIntegration: null,
+    items: [],
+    viewLevel: 3,
   };
 }
 
@@ -187,7 +198,11 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
     }
 
     case 'RESTORE_VERSION':
-      return { ...action.state };
+      return {
+        ...action.state,
+        items: action.state.items ?? [],
+        viewLevel: action.state.viewLevel ?? 3,
+      };
 
     case 'START_GENERATE':
       return { ...state, phase: 'generating', error: null };
@@ -204,6 +219,50 @@ function reducer(state: SpecFlowState, action: Action): SpecFlowState {
 
     case 'GO_BACK':
       return { ...state, phase: action.toPhase, error: null };
+
+    case 'SET_VIEW_LEVEL':
+      return { ...state, viewLevel: action.level };
+
+    case 'SET_ITEM_VIEW_OVERRIDE':
+      return {
+        ...state,
+        items: state.items.map((it) =>
+          it.id === action.itemId ? { ...it, viewOverride: action.level } : it,
+        ),
+      };
+
+    case 'SET_GAP_VIEW_OVERRIDE':
+      return {
+        ...state,
+        gaps: state.gaps.map((g) =>
+          g.id === action.gapId ? { ...g, viewOverride: action.level } : g,
+        ),
+      };
+
+    case 'UPSERT_ITEM_LEVEL_CONTENT':
+      return {
+        ...state,
+        items: state.items.map((it) =>
+          it.id === action.itemId
+            ? {
+                ...it,
+                levels: { ...it.levels, [action.level]: action.content },
+              }
+            : it,
+        ),
+      };
+
+    case 'SET_ITEMS':
+      return { ...state, items: action.items };
+
+    case 'ADD_ITEM':
+      return { ...state, items: [...state.items, action.item] };
+
+    case 'REMOVE_ITEM':
+      return {
+        ...state,
+        items: state.items.filter((it) => it.id !== action.itemId),
+      };
 
     case 'RESET':
       return createInitialState();
@@ -241,6 +300,22 @@ export type UseSpecFlowReturn = {
   approveIntegration: () => Promise<void>;
   rejectIntegration: () => void;
   allRequiredGapsAnswered: boolean;
+  setViewLevel: (level: DetailLevel) => void;
+  setItemViewOverride: (itemId: string, level: DetailLevel | undefined) => void;
+  setGapViewOverride: (gapId: string, level: DetailLevel | undefined) => void;
+  upsertItemLevelContent: (
+    itemId: string,
+    level: DetailLevel,
+    content: string,
+  ) => void;
+  setItems: (items: SpecItem[]) => void;
+  addItem: (item: SpecItem) => void;
+  removeItem: (itemId: string) => void;
+  extractItemsFromProse: () => Promise<void>;
+  elaborateItem: (
+    itemId: string,
+    targetLevel: DetailLevel,
+  ) => Promise<{ draft: string; sourceLevel: DetailLevel | 0 } | null>;
 };
 
 export function useSpecFlow(): UseSpecFlowReturn {
@@ -492,6 +567,89 @@ export function useSpecFlow(): UseSpecFlowReturn {
     dispatch({ type: 'REJECT_INTEGRATION' });
   }, []);
 
+  const setViewLevel = useCallback((level: DetailLevel) => {
+    dispatch({ type: 'SET_VIEW_LEVEL', level });
+  }, []);
+
+  const setItemViewOverride = useCallback(
+    (itemId: string, level: DetailLevel | undefined) => {
+      dispatch({ type: 'SET_ITEM_VIEW_OVERRIDE', itemId, level });
+    },
+    [],
+  );
+
+  const setGapViewOverride = useCallback(
+    (gapId: string, level: DetailLevel | undefined) => {
+      dispatch({ type: 'SET_GAP_VIEW_OVERRIDE', gapId, level });
+    },
+    [],
+  );
+
+  const upsertItemLevelContent = useCallback(
+    (itemId: string, level: DetailLevel, content: string) => {
+      dispatch({ type: 'UPSERT_ITEM_LEVEL_CONTENT', itemId, level, content });
+    },
+    [],
+  );
+
+  const setItems = useCallback((items: SpecItem[]) => {
+    dispatch({ type: 'SET_ITEMS', items });
+  }, []);
+
+  const addItem = useCallback((item: SpecItem) => {
+    dispatch({ type: 'ADD_ITEM', item });
+  }, []);
+
+  const removeItem = useCallback((itemId: string) => {
+    dispatch({ type: 'REMOVE_ITEM', itemId });
+  }, []);
+
+  const extractItemsFromProse = useCallback(async () => {
+    const prose = stateRef.current.prose;
+    if (!prose.trim()) return;
+    await createVersionSnapshot(
+      'Before extracting items',
+      'pre_extract_items',
+      stateRef.current,
+    );
+    const res = await fetch('/api/extract-items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prose }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { items: SpecItem[] };
+    if (Array.isArray(data.items)) {
+      dispatch({ type: 'SET_ITEMS', items: data.items });
+    }
+  }, []);
+
+  const elaborateItem = useCallback(
+    async (itemId: string, targetLevel: DetailLevel) => {
+      const item = stateRef.current.items.find((it) => it.id === itemId);
+      if (!item) return null;
+      const res = await fetch('/api/elaborate-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item,
+          targetLevel,
+          fullSpecContext: stateRef.current.prose,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        draft: string;
+        sourceLevel: number;
+      };
+      return {
+        draft: data.draft,
+        sourceLevel: (data.sourceLevel ?? 0) as DetailLevel | 0,
+      };
+    },
+    [],
+  );
+
   const allRequiredGapsAnswered = state.gaps
     .filter((g) => g.severity === 'critical' || g.severity === 'major')
     .every(
@@ -513,5 +671,14 @@ export function useSpecFlow(): UseSpecFlowReturn {
     approveIntegration,
     rejectIntegration,
     allRequiredGapsAnswered,
+    setViewLevel,
+    setItemViewOverride,
+    setGapViewOverride,
+    upsertItemLevelContent,
+    setItems,
+    addItem,
+    removeItem,
+    extractItemsFromProse,
+    elaborateItem,
   };
 }
